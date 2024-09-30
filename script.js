@@ -17,6 +17,7 @@ function getUserFingerPrint(appId, userId, pubId) {
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
   const sampleRate = audioContext.sampleRate;
   const channelCount = audioContext.destination.maxChannelCount;
+  audioContext.close(); // Close the AudioContext
 
   // WebGL information
   let webglVendor, webglRenderer, webglVersion, shadingLanguageVersion;
@@ -62,48 +63,55 @@ function getUserFingerPrint(appId, userId, pubId) {
 }
 
 // Function to send data to the API
-function sendDataToApi(dataObj, apiUrl, secretKey) {
-  const enc = new TextEncoder();
+async function sendDataToApi(dataObj, apiUrl, secretKey) {
+  try {
+    const enc = new TextEncoder();
 
-  crypto.subtle
-    .importKey(
+    // Import key for HMAC
+    const key = await crypto.subtle.importKey(
       "raw",
       enc.encode(secretKey),
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"]
-    )
-    .then((key) => {
-      return crypto.subtle.sign(
-        "HMAC",
-        key,
-        enc.encode(JSON.stringify(dataObj))
-      );
-    })
-    .then((signatureBuffer) => {
-      const signature = btoa(
-        String.fromCharCode(...new Uint8Array(signatureBuffer))
-      );
+    );
 
-      return fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Signature": signature,
-        },
-        body: JSON.stringify(dataObj),
-      });
-    })
-    .catch((error) => {
-      console.error("Error sending data:", error);
+    // Sign the data object
+    const signatureBuffer = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      enc.encode(JSON.stringify(dataObj))
+    );
+
+    // Convert signature to base64
+    const signature = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
+
+    // Send data to API
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Signature": signature,
+      },
+      body: JSON.stringify(dataObj),
     });
+
+    // Check for a successful response
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.statusText}`);
+    }
+
+    console.log("Data successfully sent!");
+  } catch (error) {
+    console.error("Error sending data:", error);
+  }
 }
 
 // Main function to collect fingerprint data and send it
-function collectAndSendFingerPrint(params) {
+async function collectAndSendFingerPrint(params) {
   const { appId, userId, pubId, apiUrl, secretKey } = params;
 
-  // If any required parameter is missing, log an error
+
   if (!appId || !userId || !pubId || !apiUrl || !secretKey) {
     console.error("Missing required parameters!");
     return;
@@ -113,5 +121,14 @@ function collectAndSendFingerPrint(params) {
   const deviceInfo = getUserFingerPrint(appId, userId, pubId);
 
   // Send the data to API
-  sendDataToApi(deviceInfo, apiUrl, secretKey);
+  await sendDataToApi(deviceInfo, apiUrl, secretKey);
 }
+
+// Example usage:
+// collectAndSendFingerPrint({
+//     appId: 'app-id-123',
+//     userId: 'user-id-456',
+//     pubId: 'pub-id-789',
+//     apiUrl: 'https://your-api-url.com/device-details',
+//     secretKey: 'your-secret-key'
+// });
